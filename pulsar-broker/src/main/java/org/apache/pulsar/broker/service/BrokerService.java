@@ -34,6 +34,7 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.AdaptiveRecvByteBufAllocator;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
@@ -175,7 +176,6 @@ import org.slf4j.LoggerFactory;
 @Setter(AccessLevel.PROTECTED)
 public class BrokerService implements Closeable, ZooKeeperCacheListener<Policies> {
     private static final Logger log = LoggerFactory.getLogger(BrokerService.class);
-    private static final int CHANNEL_CLOSE_TIMEOUT_SECONDS = 10;
 
     private final PulsarService pulsar;
     private final ManagedLedgerFactory managedLedgerFactory;
@@ -250,6 +250,7 @@ public class BrokerService implements Closeable, ZooKeeperCacheListener<Policies
 
     private Channel listenChannel;
     private Channel listenChannelTls;
+    private final int brokerServicePortCloseTimeoutInSeconds;
 
     private boolean preciseTopicPublishRateLimitingEnable;
     private final long maxMessagePublishBufferBytes;
@@ -369,6 +370,9 @@ public class BrokerService implements Closeable, ZooKeeperCacheListener<Policies
         this.brokerEntryMetadataInterceptors = BrokerEntryMetadataUtils
                 .loadBrokerEntryMetadataInterceptors(pulsar.getConfiguration().getBrokerEntryMetadataInterceptors(),
                         BrokerService.class.getClassLoader());
+
+        this.brokerServicePortCloseTimeoutInSeconds = pulsar.getConfiguration()
+                .getBrokerServicePortCloseTimeoutInSeconds();
     }
 
     // This call is used for starting additional protocol handlers
@@ -712,13 +716,17 @@ public class BrokerService implements Closeable, ZooKeeperCacheListener<Policies
     }
 
     private void closeChannel(Channel channel) {
-        try {
-            if (!channel.close().await(CHANNEL_CLOSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-               log.warn("Channel {} didn't close before timeout.", channel);
+        ChannelFuture closeFuture = channel.close();
+        if (brokerServicePortCloseTimeoutInSeconds > 0) {
+            try {
+                if (!closeFuture.await(brokerServicePortCloseTimeoutInSeconds, TimeUnit.SECONDS)) {
+                    log.warn("Channel {} didn't close before timeout of {} seconds.", channel,
+                            brokerServicePortCloseTimeoutInSeconds);
+                }
+            } catch (InterruptedException e) {
+                log.warn("Waiting to close channel {} was interrupted.", channel, e);
+                Thread.currentThread().interrupt();
             }
-        } catch (InterruptedException e) {
-            log.warn("Waiting to close channel {} was interrupted.", channel, e);
-            Thread.currentThread().interrupt();
         }
     }
 
