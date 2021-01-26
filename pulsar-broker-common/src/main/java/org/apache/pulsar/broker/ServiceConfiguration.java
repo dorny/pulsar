@@ -120,13 +120,18 @@ public class ServiceConfiguration implements PulsarConfiguration {
         category = CATEGORY_SERVER,
         doc = "The port for serving binary protobuf requests"
     )
-
     private Optional<Integer> brokerServicePort = Optional.of(6650);
     @FieldContext(
         category = CATEGORY_SERVER,
         doc = "The port for serving tls secured binary protobuf requests"
     )
     private Optional<Integer> brokerServicePortTls = Optional.empty();
+    @FieldContext(
+            category = CATEGORY_SERVER,
+            doc = "The maximum duration (in seconds) to wait for each broker service network port to close "
+                    + "at broker service shutdown. No waiting will take place when the value is set to <= 0."
+    )
+    private int brokerServicePortCloseTimeoutInSeconds = 2;
     @FieldContext(
         category = CATEGORY_SERVER,
         doc = "The port for serving http requests"
@@ -2118,5 +2123,13 @@ public class ServiceConfiguration implements PulsarConfiguration {
         } else {
             return brokerDeleteInactiveTopicsMaxInactiveDurationSeconds;
         }
+    }
+
+    public int getBrokerServicePortCloseTimeoutInSeconds() {
+        return brokerServicePortCloseTimeoutInSeconds;
+    }
+
+    public void setBrokerServicePortCloseTimeoutInSeconds(int brokerServicePortCloseTimeoutInSeconds) {
+        this.brokerServicePortCloseTimeoutInSeconds = brokerServicePortCloseTimeoutInSeconds;
     }
 }
