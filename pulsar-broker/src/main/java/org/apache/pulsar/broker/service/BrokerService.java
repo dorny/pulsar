@@ -34,18 +34,18 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.AdaptiveRecvByteBufAllocator;
 import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.handler.ssl.SslContext;
 import io.netty.util.concurrent.DefaultThreadFactory;
-import java.io.Closeable;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -132,6 +132,7 @@ import org.apache.pulsar.common.events.EventsTopicNames;
 import org.apache.pulsar.common.intercept.AppendIndexMetadataInterceptor;
 import org.apache.pulsar.common.intercept.BrokerEntryMetadataInterceptor;
 import org.apache.pulsar.common.intercept.BrokerEntryMetadataUtils;
+import org.apache.pulsar.common.lifecycle.AsyncCloseable;
 import org.apache.pulsar.common.naming.NamespaceBundle;
 import org.apache.pulsar.common.naming.NamespaceBundleFactory;
 import org.apache.pulsar.common.naming.NamespaceBundles;
@@ -160,6 +161,7 @@ import org.apache.pulsar.common.util.ObjectMapperFactory;
 import org.apache.pulsar.common.util.RestException;
 import org.apache.pulsar.common.util.collections.ConcurrentOpenHashMap;
 import org.apache.pulsar.common.util.collections.ConcurrentOpenHashSet;
+import org.apache.pulsar.common.util.netty.ChannelFutures;
 import org.apache.pulsar.common.util.netty.EventLoopUtil;
 import org.apache.pulsar.policies.data.loadbalancer.NamespaceBundleStats;
 import org.apache.pulsar.zookeeper.ZkIsolatedBookieEnsemblePlacementPolicy;
@@ -175,7 +177,7 @@ import org.slf4j.LoggerFactory;
 
 @Getter(AccessLevel.PUBLIC)
 @Setter(AccessLevel.PROTECTED)
-public class BrokerService implements Closeable, ZooKeeperCacheListener<Policies> {
+public class BrokerService implements AsyncCloseable, ZooKeeperCacheListener<Policies> {
     private static final Logger log = LoggerFactory.getLogger(BrokerService.class);
 
     private final PulsarService pulsar;
@@ -646,7 +648,7 @@ public class BrokerService implements Closeable, ZooKeeperCacheListener<Policies
     }
 
     @Override
-    public void close() throws IOException {
+    public CompletableFuture<Void> closeAsync() {
         log.info("Shutting down Pulsar Broker service");
 
         if (pulsar.getConfigurationCache() != null) {
@@ -674,12 +676,14 @@ public class BrokerService implements Closeable, ZooKeeperCacheListener<Policies
             }
         });
 
+        List<CompletableFuture<Void>> asyncCloseFutures = new ArrayList<>();
+
         if (listenChannel != null) {
-            closeChannel(listenChannel);
+            asyncCloseFutures.add(closeChannel(listenChannel));
         }
 
         if (listenChannelTls != null) {
-            closeChannel(listenChannelTls);
+            asyncCloseFutures.add(closeChannel(listenChannelTls));
         }
 
         acceptorGroup.shutdownGracefully();
@@ -697,12 +701,20 @@ public class BrokerService implements Closeable, ZooKeeperCacheListener<Policies
         messagePublishBufferMonitor.shutdown();
         consumedLedgersMonitor.shutdown();
         backlogQuotaChecker.shutdown();
-        authenticationService.close();
+        try {
+            authenticationService.close();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
         pulsarStats.close();
         ClientCnxnAspect.removeListener(zkStatsListener);
         ClientCnxnAspect.registerExecutor(null);
         topicOrderedExecutor.shutdown();
-        delayedDeliveryTrackerFactory.close();
+        try {
+            delayedDeliveryTrackerFactory.close();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
         if (topicPublishRateLimiterMonitor != null) {
             topicPublishRateLimiterMonitor.shutdown();
         }
@@ -713,22 +725,16 @@ public class BrokerService implements Closeable, ZooKeeperCacheListener<Policies
             deduplicationSnapshotMonitor.shutdown();
         }
 
-        log.info("Broker service completely shut down");
+        CompletableFuture<Void> shutdownFuture =
+                CompletableFuture.allOf(asyncCloseFutures.toArray(new CompletableFuture[0]))
+                        .thenAccept(__ -> log.info("Broker service completely shut down"));
+        return shutdownFuture;
     }
 
-    private void closeChannel(Channel channel) {
-        ChannelFuture closeFuture = channel.close();
-        if (brokerServicePortCloseTimeoutInSeconds > 0) {
-            try {
-                if (!closeFuture.await(brokerServicePortCloseTimeoutInSeconds, TimeUnit.SECONDS)) {
-                    log.warn("Channel {} didn't close before timeout of {} seconds.", channel,
-                            brokerServicePortCloseTimeoutInSeconds);
-                }
-            } catch (InterruptedException e) {
-                log.warn("Waiting to close channel {} was interrupted.", channel, e);
-                Thread.currentThread().interrupt();
-            }
-        }
+    private CompletableFuture<Void> closeChannel(Channel channel) {
+        return ChannelFutures.toCompletableFuture(channel.close())
+                // convert to CompletableFuture<Void>
+                .thenAccept(__ -> {});
     }
 
     /**

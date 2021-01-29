@@ -32,6 +32,7 @@ import io.netty.util.concurrent.DefaultThreadFactory;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
@@ -105,6 +106,7 @@ import org.apache.pulsar.client.impl.PulsarClientImpl;
 import org.apache.pulsar.common.conf.InternalConfigurationData;
 import org.apache.pulsar.common.configuration.PulsarConfigurationLoader;
 import org.apache.pulsar.common.configuration.VipStatus;
+import org.apache.pulsar.common.lifecycle.AsyncCloseable;
 import org.apache.pulsar.common.naming.NamespaceBundle;
 import org.apache.pulsar.common.naming.NamespaceName;
 import org.apache.pulsar.common.naming.TopicName;
@@ -154,7 +156,7 @@ import org.slf4j.LoggerFactory;
 
 @Getter(AccessLevel.PUBLIC)
 @Setter(AccessLevel.PROTECTED)
-public class PulsarService implements AutoCloseable {
+public class PulsarService implements AsyncCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(PulsarService.class);
     private ServiceConfiguration config = null;
     private NamespaceService nsService = null;
@@ -232,6 +234,7 @@ public class PulsarService implements AutoCloseable {
 
     private final ReentrantLock mutex = new ReentrantLock();
     private final Condition isClosedCondition = mutex.newCondition();
+    private final AtomicReference<CompletableFuture<Void>> closeFutureReference = new AtomicReference<>();
     // key is listener name , value is pulsar address and pulsar ssl address
     private Map<String, AdvertisedListener> advertisedListeners;
 
@@ -295,12 +298,11 @@ public class PulsarService implements AutoCloseable {
      * Close the current pulsar service. All resources are released.
      */
     @Override
-    public void close() throws PulsarServerException {
+    public CompletableFuture<Void> closeAsync() {
         mutex.lock();
-
         try {
-            if (state == State.Closed) {
-                return;
+            if (closeFutureReference.get() != null) {
+                return closeFutureReference.get();
             }
 
             // close the service in reverse order v.s. in which they are started
@@ -313,8 +315,9 @@ public class PulsarService implements AutoCloseable {
                 this.webSocketService.close();
             }
 
+            List<CompletableFuture<Void>> asyncCloseFutures = new ArrayList<>();
             if (this.brokerService != null) {
-                this.brokerService.close();
+                asyncCloseFutures.add(this.brokerService.closeAsync());
                 this.brokerService = null;
             }
 
@@ -413,6 +416,11 @@ public class PulsarService implements AutoCloseable {
 
             state = State.Closed;
             isClosedCondition.signalAll();
+
+            CompletableFuture<Void> shutdownFuture =
+                    CompletableFuture.allOf(asyncCloseFutures.toArray(new CompletableFuture[0]));
+            closeFutureReference.set(shutdownFuture);
+            return shutdownFuture;
         } catch (Exception e) {
             if (e instanceof CompletionException && e.getCause() instanceof MetadataStoreException) {
                 throw new PulsarServerException(MetadataStoreException.unwrap((CompletionException) e));
