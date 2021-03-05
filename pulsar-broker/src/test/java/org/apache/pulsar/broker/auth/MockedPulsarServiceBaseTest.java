@@ -56,6 +56,7 @@ import org.apache.pulsar.client.api.PulsarClientException;
 import org.apache.pulsar.common.policies.data.ClusterData;
 import org.apache.pulsar.common.policies.data.TenantInfo;
 import org.apache.pulsar.metadata.impl.ZKMetadataStore;
+import org.apache.pulsar.tests.TestRetrySupport;
 import org.apache.pulsar.zookeeper.ZooKeeperClientFactory;
 import org.apache.pulsar.zookeeper.ZookeeperClientFactoryImpl;
 import org.apache.zookeeper.CreateMode;
@@ -70,7 +71,7 @@ import org.slf4j.LoggerFactory;
  * Base class for all tests that need a Pulsar instance without a ZK and BK cluster.
  */
 @PowerMockIgnore(value = {"org.slf4j.*", "com.sun.org.apache.xerces.*" })
-public abstract class MockedPulsarServiceBaseTest {
+public abstract class MockedPulsarServiceBaseTest extends TestRetrySupport {
 
     protected final String DUMMY_VALUE = "DUMMY_VALUE";
     protected final String GLOBAL_DUMMY_VALUE = "GLOBAL_DUMMY_VALUE";
@@ -101,7 +102,9 @@ public abstract class MockedPulsarServiceBaseTest {
         this.conf = getDefaultConf();
     }
 
+
     protected final void internalSetup() throws Exception {
+        incrementSetupNumber();
         init();
         lookupUrl = new URI(brokerUrl.toString());
         if (isTcpLookup) {
@@ -174,6 +177,7 @@ public abstract class MockedPulsarServiceBaseTest {
     }
 
     protected final void internalCleanup() throws Exception {
+        markCurrentSetupNumberCleaned();
         // if init fails, some of these could be null, and if so would throw
         // an NPE in shutdown, obscuring the real error
         if (admin != null) {
@@ -220,7 +224,6 @@ public abstract class MockedPulsarServiceBaseTest {
             }
             bkExecutor = null;
         }
-
     }
 
     protected abstract void setup() throws Exception;
