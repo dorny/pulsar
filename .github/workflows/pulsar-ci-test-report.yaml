@@ -34,6 +34,6 @@ jobs:
           artifact: /(.*)-test-report/
           name: '$1 Tests'
           path: '*.xml'
-          reporter: jest-junit
+          reporter: java-junit
           max-annotations: 50
           token: ${{ secrets.GITHUB_TOKEN }}
