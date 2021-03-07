@@ -217,7 +217,7 @@ jobs:
         if: always()
         with:
           name: Unit-${{ matrix.group }}-test-report
-          path: test-reports
+          path: merged-test-report.xml
 
       - name: Upload Surefire reports
         uses: actions/upload-artifact@v2
