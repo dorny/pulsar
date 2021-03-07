@@ -27,7 +27,7 @@ jobs:
   report:
     runs-on: ubuntu-20.04
     steps:
-      - uses: dorny/test-reporter@v1
+      - uses: dorny/test-reporter@avoid-exceeding-api-limit
         env:
           ACTIONS_STEP_DEBUG: true
         with:
