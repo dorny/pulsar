@@ -26,7 +26,7 @@ public class AddMissingPatchVersionTest {
     @Test
     public void testVersionStrings() throws Exception {
         // Fixable versions (those lacking a patch release) get normalized with a patch release of 0
-        Assert.assertEquals(PulsarVersion.fixVersionString("1.2"), "1.2.0");
+        Assert.assertEquals(PulsarVersion.fixVersionString("1.2"), "1.2.1");
         Assert.assertEquals(PulsarVersion.fixVersionString("1.2-SNAPSHOT"), "1.2.0-SNAPSHOT");
         Assert.assertEquals(PulsarVersion.fixVersionString("1.2-SNAPSHOT+BUILD"), "1.2.0-SNAPSHOT+BUILD");
         Assert.assertEquals(PulsarVersion.fixVersionString("1.2+BUILD"), "1.2.0+BUILD");
